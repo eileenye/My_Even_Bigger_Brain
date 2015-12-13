@@ -1,0 +1,346 @@
+library(RSQLite)
+imdb = dbConnect(drv = SQLite(), dbname = '~/Desktop/STA 141 Fall 2015/STA 141 Assignment 5/lean_imdbpy (1).db') 
+dbListTables(imdb) #list of tables in database
+ls(2) #list of functions in R to get SQL functions
+#1. How many actors are there in the database? How many movies?
+dbGetQuery(imdb, "SELECT * FROM role_type")
+dbGetQuery(imdb, "SELECT COUNT(DISTINCT person_id) FROM cast_info 
+           WHERE role_id = 1 OR role_id = 2;") #3492018
+
+dbGetQuery(imdb, "SELECT COUNT(DISTINCT id) FROM title 
+           WHERE kind_id = 1 OR kind_id = 3 OR kind_id = 4;") #notice: movie_id correlates to movie names
+
+#2. What time period does the database cover?
+dbListTables(imdb) #list of tables in database
+dbGetQuery(imdb, "SELECT * FROM title LIMIT 5")
+dbGetQuery(imdb, "SELECT DISTINCT production_year FROM title ORDER BY production_year")
+dbGetQuery(imdb, "SELECT  MAX(production_year), MIN(production_year) FROM title")
+
+#3. What proportion of the actors are female? male?
+dbGetQuery(imdb, "CREATE TABLE allactors AS SELECT DISTINCT person_id AS person_id FROM cast_info 
+           WHERE role_id = 1 OR role_id = 2;")
+dbGetQuery(imdb, "SELECT * FROM allactors LIMIT 5")
+totalgender = dbGetQuery(imdb, "SELECT COUNT(name.id) FROM name, allactors 
+                         WHERE name.gender IS NOT NULL
+                         AND name.id IN (allactors.person_id)")
+totalgender
+males = dbGetQuery(imdb, "SELECT COUNT(name.id) AS males FROM name, allactors
+                   WHERE name.gender = 'm'
+                   AND name.id IN (allactors.person_id)")
+males
+females = dbGetQuery(imdb, "SELECT COUNT(name.id) AS females FROM name, allactors
+                   WHERE name.gender = 'f'
+                   AND name.id IN (allactors.person_id)")
+females
+males_prop = males/totalgender
+females_prop = females/totalgender
+males_prop
+females_prop
+dbGetQuery(imdb, "DROP TABLE allactors")
+
+#4. What proportion of the entries in the movies table are actual movies and 
+  #what proportion are television series, etc.?
+dbGetQuery(imdb, "SELECT * FROM kind_type LIMIT 15")
+dbGetQuery(imdb, "CREATE TABLE video_type AS SELECT kind_id, COUNT(kind_id) AS video_kind, (SELECT COUNT(kind_id) FROM title) AS videos
+           FROM title GROUP BY kind_id")
+dbGetQuery(imdb, "SELECT * FROM video_type")
+videoProp = dbGetQuery(imdb, "SELECT CAST(video_kind AS float)/videos AS 'proportion' FROM video_type")
+rownames(videoProp) = c("Movie", "TV Series", "TV Movie", "Video Movie", "Video Game", "Episode")
+videoProp
+dbGetQuery(imdb, "DROP TABLE video_type")
+#5. How many genres are there? What are their names/descriptions?
+dbGetQuery(imdb, "SELECT * FROM info_type LIMIT 15")
+dbGetQuery(imdb, "SELECT DISTINCT info FROM movie_info WHERE info_type_id = 3") #32 genres
+
+#6. List the 10 most common genres of movies, showing the number of movies in each of these genres.
+dbGetQuery(imdb, "SELECT info, COUNT(info) FROM movie_info WHERE info_type_id = 3 GROUP BY info ORDER BY COUNT(info) DESC LIMIT 10")
+
+#7. Find all movies with the keyword 'space'. How many are there? 
+  #What are the years these were released? and who were the top 5 actors in each of these movies?
+
+#space in keyword:
+#keep: id, keyword. unique identifier is 'id', there are 392 'id'
+dbGetQuery(imdb, "SELECT * FROM keyword WHERE keyword LIKE '%space%' LIMIT 5") #392
+
+#space keyword in videos
+spaceVid = dbGetQuery(imdb, "SELECT movie_keyword.* FROM movie_keyword, keyword
+           WHERE keyword.id = movie_keyword.keyword_id
+           AND keyword.keyword LIKE '%space%'")
+nrow(spaceVid) #9108 videos with 'space'
+
+#space keyword in movies only
+spaceMov = dbGetQuery(imdb, "SELECT movie_keyword.*, title.title FROM movie_keyword, keyword, title
+                      WHERE keyword.id = movie_keyword.keyword_id
+                      AND keyword.keyword LIKE '%space%'
+                      AND title.id = movie_keyword.movie_id
+                      AND (title.kind_id = 1 OR title.kind_id = 3 OR title.kind_id = 4)
+                      GROUP BY movie_id")
+nrow(spaceMov) #2296 distinct movies with 'space'
+
+#years movies with space released
+dbGetQuery(imdb, "CREATE TABLE spaceYr AS SELECT movie_keyword.keyword_id AS keyword_id, movie_keyword.movie_id AS movie_id, title.title AS title, title.production_year AS year FROM movie_keyword, keyword, title
+                      WHERE keyword.id = movie_keyword.keyword_id
+                      AND keyword.keyword LIKE '%space%'
+                      AND title.id = movie_keyword.movie_id
+                      AND (title.kind_id = 1 OR title.kind_id = 3 OR title.kind_id = 4)
+                      GROUP BY movie_id")
+dbGetQuery(imdb, "SELECT DISTINCT year FROM spaceYr ORDER BY year") #2296 distinct movies with 'space'
+dbGetQuery(imdb, "SELECT * FROM spaceYr LIMIT 2")
+#top 5 actors in these movies
+dbGetQuery(imdb, "SELECT * FROM aka_name LIMIT 5")
+dbGetQuery(imdb, "SELECT * FROM cast_info LIMIT 5")
+actorsInSpace = dbGetQuery(imdb, "SELECT cast_info.person_id, aka_name.name, cast_info.nr_order, cast_info.movie_id 
+           FROM aka_name, cast_info, spaceYr 
+           WHERE cast_info.person_id = aka_name.person_id 
+           AND cast_info.movie_id IN (spaceYr.movie_id)
+           ORDER BY cast_info.movie_id")
+head(actorsInSpace, 20)
+
+gg = actorsInSpace[!duplicated(actorsInSpace[,c("person_id", "movie_id")]),]
+bymovie_id = split(gg, gg$movie_id)
+head(bymovie_id)
+topactors = lapply(1:length(bymovie_id), function(index){
+  bymovie_id[[index]][order(bymovie_id[[index]][,3]),]
+})
+
+top5actors = lapply(1:length(topactors), function(index){
+  topactors[[index]][1:5,]
+})
+head(top5actors)
+dbGetQuery(imdb, "DROP TABLE spaceYr")
+#8. Has the number of movies in each genre changed over time? 
+  #Plot the overall number of movies in each year over time, and for each genre.
+dbGetQuery(imdb, "SELECT * FROM movie_info WHERE info_type_id = 3 LIMIT 5") 
+dbGetQuery(imdb, "SELECT DISTINCT info FROM movie_info WHERE info_type_id = 3 ORDER BY info") #32 genres
+dbGetQuery(imdb, "SELECT * FROM aka_title WHERE kind_id = 1 OR kind_id = 3 OR kind_id = 4 LIMIT 5")
+dbGetQuery(imdb, "CREATE TABLE movieovertime AS SELECT movie_info.info, movie_info.movie_id, aka_title.production_year 
+           FROM movie_info, aka_title
+           WHERE movie_info.info_type_id = 3 AND aka_title.movie_id = movie_info.movie_id AND (aka_title.kind_id = 1 OR aka_title.kind_id = 3 OR aka_title.kind_id = 4)")
+
+Action = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Action' GROUP BY production_year")
+Adult = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Adult' GROUP BY production_year")
+Adventure = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Adventure' GROUP BY production_year")
+Animation = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Animation' GROUP BY production_year")
+Biography = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Biography' GROUP BY production_year")
+Comedy = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Comedy' GROUP BY production_year")
+Commercial = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Commercial' GROUP BY production_year")
+Crime = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Crime' GROUP BY production_year")
+Documentary = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Documentary' GROUP BY production_year")
+Drama = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Drama' GROUP BY production_year")
+Erotica = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Erotica' GROUP BY production_year")
+Experimental = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Experimental' GROUP BY production_year")
+Family = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Family' GROUP BY production_year")
+Fantasy = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Fantasy' GROUP BY production_year")
+Film_Noir = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Film-Noir' GROUP BY production_year")
+Game_Show = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Game-Show' GROUP BY production_year")
+History = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'History' GROUP BY production_year")
+Horror = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Horror' GROUP BY production_year")
+Lifestyle = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Lifestyle' GROUP BY production_year")
+Music = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Music' GROUP BY production_year")
+Musical = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Musical' GROUP BY production_year")
+Mystery = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Mystery' GROUP BY production_year")
+News = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'News' GROUP BY production_year")
+Reality_TV = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Reality-TV' GROUP BY production_year")
+Romance = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Romance' GROUP BY production_year")
+Sci_Fi = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Sci-Fi' GROUP BY production_year")
+Short = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Short' GROUP BY production_year")
+Sport = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Sport' GROUP BY production_year")
+Talk_Show = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Talk-Show' GROUP BY production_year")
+Thriller = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Thriller' GROUP BY production_year")
+War = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'War' GROUP BY production_year")
+Western = dbGetQuery(imdb, "SELECT info, production_year, COUNT(movie_id)  FROM movieovertime WHERE info = 'Western' GROUP BY production_year")
+Western
+plot(Action[,2], Action[,3], type = 'l', ylim = c(0, 1200), xlab = 'Years', ylab = 'Number of Movies', main = 'Change in Number of Movies in Genres Throughout the Years')
+points(Adult[,2], Adult[,3], type = 'l', col = 'salmon')
+points(Adventure[,2], Adventure[,3], type = 'l', col = 'peru')
+points(Animation[,2], Animation[,3], type = 'l', col = 'orchid')
+points(Biography[,2], Biography[,3], type = 'l', col = 'maroon')
+legend('topleft', legend = c("Action", "Adult", "Adventure", "Animation", "Biography"), col = c("black", "salmon", "peru", "orchid", "maroon"), lty = 1, bty = 'n')
+
+plot(Comedy[,2], Comedy[,3], type = 'l', col = 'navy', ylim = c(0, 4500), xlab = 'Years', ylab = 'Number of Movies', main = 'Change in Number of Movies in Genres Throughout the Years')
+points(Commercial[,2], Commercial[,3], type = 'l', col = 'moccasin')
+points(Crime[,2], Crime[,3], type = 'l', col = 'khaki')
+points(Documentary[,2], Documentary[,3], type = 'l', col = 'hotpink')
+points(Drama[,2], Drama[,3], type = 'l', col = 'lightcoral')
+legend('topleft', legend = c("Comedy", "Commercial", "Crime", "Documentary", "Drama"), col = c("navy", "moccasin", "khaki", "hotpink", "lightcoral"), lty = 1, bty = 'n')
+#plot(Erotica[,2], Erotica[,3], type = 'l', col = 'lightblue', ylim = c(0, 4500), xlab = 'Years', ylab = 'Number of Movies', main = 'Change in Number of Movies in Genres Throughout the Years')
+#plot(Experimental[,2], Experimental[,3], type = 'l', col = 'gray', ylim = c(0, 4500), xlab = 'Years', ylab = 'Number of Movies', main = 'Change in Number of Movies in Genres Throughout the Years')
+plot(Family[,2], Family[,3], type = 'l', col = 'darkviolet', ylim = c(0, 1000), xlab = 'Years', ylab = 'Number of Movies', main = 'Change in Number of Movies in Genres Throughout the Years')
+points(Fantasy[,2], Fantasy[,3], type = 'l', col = 'firebrick')
+points(Film_Noir[,2], Film_Noir[,3], type = 'l', col = 'gold')
+points(Game_Show[,2], Game_Show[,3], type = 'l', col = 'darkseagreen')
+points(History[,2], History[,3], type = 'l', col = 'deeppink')
+legend('topleft', legend = c("Family", "Fantasy", "Film_Noir", "Game_Show", "History"), col = c("darkviolet", "firebrick", "gold", "darkseagreen", "deeppink"), lty = 1, bty = 'n')
+
+plot(Horror[,2], Horror[,3], type = 'l', col = 'lightgrey', ylim = c(0, 1000), xlab = 'Years', ylab = 'Number of Movies', main = 'Change in Number of Movies in Genres Throughout the Years')
+#points(Lifestyle[,2], Lifestyle[,3], type = 'l', col = 'lightgrey')
+points(Music[,2], Music[,3], type = 'l', col = 'midnightblue')
+points(Musical[,2], Musical[,3], type = 'l', col = 'mediumaquamarine')
+points(Mystery[,2], Mystery[,3], type = 'l', col = 'orchid')
+points(News[,2], News[,3], type = 'l', col = 'peachpuff')
+legend('topleft', legend = c("Horror", "Music", "Music", "Musical", "News"), col = c("lightgrey", "midnightblue", "mediumaquamarine", "orchid", "peachpuff"), lty = 1, bty = 'n')
+
+plot(Reality_TV[,2], Reality_TV[,3], type = 'l', col = 'sandybrown', ylim = c(0, 2500), xlab = 'Years', ylab = 'Number of Movies', main = 'Change in Number of Movies in Genres Throughout the Years')
+points(Romance[,2], Romance[,3], type = 'l', col = 'magenta')
+points(Sci_Fi[,2], Sci_Fi[,3], type = 'l', col = 'orange')
+points(Short[,2], Short[,3], type = 'l', col = 'pink')
+points(Sport[,2], Sport[,3], type = 'l', col = 'purple')
+legend('topleft', legend = c("Reality_TV", "Romance", "Sci_Fi", "Short", "Sport"), col = c("sandybrown", "magenta", "orange", "pink", "purple"), lty = 1, bty = 'n')
+
+plot(Talk_Show[,2], Talk_Show[,3], type = 'l', col = 'yellow', ylim = c(0, 1500), xlab = 'Years', ylab = 'Number of Movies', main = 'Change in Number of Movies in Genres Throughout the Years')
+points(Thriller[,2], Thriller[,3], type = 'l', col = 'red')
+points(War[,2], War[,3], type = 'l', col = 'green')
+points(Western[,2], Western[,3], type = 'l', col = 'blue')
+legend('topleft', legend = c("Talk_Show", "Thriller", "War", "Western"), col = c("yellow", "red", "green", "blue"), lty = 1, bty = 'n')
+
+dbGetQuery(imdb, "DROP TABLE movieovertime")
+#9. Who are the actors that have been in the most movies? 
+  #List the top 20.
+dbGetQuery(imdb, "SELECT * FROM cast_info LIMIT 5;")
+dbGetQuery(imdb, "SELECT * FROM name LIMIT 5;")
+dbGetQuery(imdb, "SELECT * FROM title LIMIT 5;")
+
+dbGetQuery(imdb, "CREATE TABLE moviestar AS SELECT cast_info.person_id AS person_id, cast_info.movie_id AS movie_id
+           FROM cast_info
+           WHERE (cast_info.role_id = 1 OR cast_info.role_id = 2)")
+dbGetQuery(imdb, "SELECT * FROM moviestar LIMIT 5")
+dbGetQuery(imdb, "CREATE TABLE superstar AS SELECT moviestar.person_id AS person_id, name.name AS name, moviestar.movie_id FROM moviestar, name
+           WHERE name.id IN (moviestar.person_id)")
+dbGetQuery(imdb, "SELECT superstar.*, title.title, COUNT(superstar.movie_id) FROM superstar, title
+           WHERE title.id IN (superstar.movie_id)
+           AND (title.kind_id = 1 OR title.kind_id = 3 OR title.kind_id = 4)
+           GROUP BY superstar.person_id
+           ORDER BY COUNT(superstar.movie_id) DESC LIMIT 20")
+
+dbGetQuery(imdb, "DROP TABLE superstar")
+dbGetQuery(imdb, "DROP TABLE moviestar")
+  #R CODE#####
+cast = dbGetQuery(imdb, "SELECT * FROM cast_info;")
+name = dbGetQuery(imdb, "SELECT * FROM name;")
+movie = dbGetQuery(imdb, "SELECT * FROM title;")
+t = subset(cast, role_id = 1, role_id = 2)
+d = subset(movie, kind_id = 1, kind_id = 3, kind_id = 4)
+nrow(t)
+tmp = t[which(t[,3] %in% d[,1]),]  
+nrow(tmp)  
+#10. Who are the actors that have had the most number of movies with 
+  #"top billing", i.e., billed as 1, 2 or 3? For each actor, 
+  #also show the years these movies spanned?
+dbGetQuery(imdb, "SELECT * FROM cast_info LIMIT 5")
+#actors with most movies and top billed at 1,2, or 3 #####FIND 10 OF THESE ACTORS
+dbGetQuery(imdb, "CREATE TABLE topBill AS SELECT cast_info.role_id AS role_id, cast_info.nr_order AS nr_order, cast_info.person_id AS person_id, cast_info.movie_id AS movie_id
+           FROM cast_info
+           WHERE (cast_info.nr_order = 1 OR cast_info.nr_order = 2 OR cast_info.nr_order = 3)
+           AND (cast_info.role_id = 1 OR cast_info.role_id = 2)")
+dbGetQuery(imdb, "SELECT * FROM topBill LIMIT 5")
+dbGetQuery(imdb, "SELECT COUNT(person_id) FROM topBill")
+#top 10 actors in most movies
+dbGetQuery(imdb, "CREATE TABLE top10 AS SELECT topBill.*, COUNT(topBill.movie_id) AS num_movie FROM topBill,title
+           WHERE topBill.movie_id IN (title.id)
+           AND (title.kind_id = 1 OR title.kind_id = 3 OR title.kind_id = 4)
+           GROUP BY topBill.person_id
+           ORDER BY COUNT(topBill.movie_id) DESC LIMIT 10")
+dbGetQuery(imdb, "SELECT * FROM top10")
+dbGetQuery(imdb, "SELECT name.name FROM top10, name
+           WHERE name.id IN (top10.person_id)")
+#year span
+dbGetQuery(imdb, "CREATE TABLE yearSpan AS SELECT topBill.* FROM topBill, top10
+           WHERE topBill.person_id IN (top10.person_id)")
+dbGetQuery(imdb, "SELECT DISTINCT title.production_year FROM yearSpan, title
+           WHERE title.id IN (yearSpan.movie_id)
+           ORDER BY title.production_year")
+dbGetQuery(imdb, "DROP TABLE topBill")
+dbGetQuery(imdb, "DROP TABLE top10")
+dbGetQuery(imdb, "DROP TABLE yearSpan")
+#11. Who are the 10 actors that performed in the most movies within any given year? 
+  #What are their names, the year they starred in these movies and the names of the movies?
+dbGetQuery(imdb, "SELECT production_year, id, COUNT(id) FROM title
+           WHERE (kind_id = 1 OR kind_id = 3 OR kind_id = 4)
+           GROUP BY production_year")
+dbGetQuery(imdb, "CREATE TABLE byMovieActors AS SELECT cast_info.person_id AS person_id, cast_info.movie_id AS movie_id, title.production_year AS production_year FROM cast_info, title 
+           WHERE (cast_info.role_id = 1 OR cast_info.role_id = 2)
+           AND (title.kind_id = 1 OR title.kind_id = 3 OR title.kind_id = 4)
+           AND cast_info.movie_id = title.id ")
+byYear = dbGetQuery(imdb, "SELECT byMovieActors.production_year, byMovieActors.movie_id, title.title, byMovieActors.person_id, name.name FROM byMovieActors, title, name
+           WHERE byMovieActors.production_year IS NOT NULL
+           AND title.id IN (byMovieActors.movie_id)
+           AND name.id IN (byMovieActors.person_id)
+           ORDER BY byMovieActors.production_year")
+
+dbGetQuery(imdb, "SELECT movie_id, role_id FROM cast_info GROUP BY role_id LIMIT 5")
+byYearProd = split(byYear, byYear$production_year)
+library(plyr)
+topActorsbyYear = lapply( 1: length(byYearProd), function(index){
+  tt = byYearProd[[index]][!duplicated(byYearProd[[index]][c("person_id", "production_year")]),]
+  byfreq = cbind(tt,count(byYearProd[[index]][,4])[,2])
+  top10 = byfreq[order(byfreq[,6], decreasing = TRUE),]
+  colnames(top10) = c("year", "movie_id", "title", "person_id", "name", "actor_freq")
+  top10
+})
+head(topActorsbyYear)
+dbGetQuery(imdb, "DROP TABLE byMovieActors")
+
+#12. Who are the 10 actors that have the most aliases (i.e., see the aka_names table).
+dbGetQuery(imdb, "SELECT person_id, name, COUNT(name) FROM aka_name GROUP BY person_id ORDER BY COUNT(name) DESC LIMIT 10;")
+
+#13. Networks: Pick a (lead) actor who has been in at least 20 movies. 
+#Find all of the other actors that have appeared in a movie with that person. 
+#For each of these, find all the people they have appeared in a move with it. 
+#Use this to create a network/graph of who has appeared with who. 
+#Use the igraph or statnet packages to display this network. 
+#If you want, you can do this with individual SQL commands and the process the results in R 
+#to generate new SQL queries. In other words, don't spend too much time trying to create clever SQL queries 
+#if there is a more direct way to do this in R.
+
+##move this up and redo 10/11/12
+dbGetQuery(imdb, "CREATE TABLE topActors AS SELECT topBill.*, COUNT(topBill.movie_id) FROM topBill, title
+           WHERE topBill.movie_id IN (title.id)
+           AND (title.kind_id = 1 OR title.kind_id = 3 OR title.kind_id = 4)
+           GROUP BY topBill.person_id
+           ORDER BY COUNT(topBill.movie_id) DESC")
+dbGetQuery(imdb, "SELECT * FROM topActors LIMIT 5")
+dbGetQuery(imdb, "SELECT topActors.*, name.name FROM topActors, name
+           WHERE name.id IN (topActors.person_id) LIMIT 500")
+dbGetQuery(imdb, "DROP TABLE topActors")
+#ACTOR: #264 Andy Lau (116 movies, person_id: 1138222, nr_order = 1)
+#1. Pull person_id for specific actor
+andy = dbGetQuery(imdb, "SELECT * FROM name WHERE id = 1138222")
+
+#2. Pull all movies for that actor.
+dbGetQuery(imdb, "CREATE TABLE AndyMovies AS SELECT DISTINCT movie_id FROM cast_info WHERE person_id = 1138222")
+andysMovies = dbGetQuery(imdb, "SELECT * FROM AndyMovies")
+head(andysMovies)
+nrow(andysMovies)#172 videos
+#3. Pull cast for all that Andy's movies.
+dbGetQuery(imdb, "CREATE TABLE AndyActs AS SELECT cast_info.* FROM cast_info, AndyMovies
+           WHERE cast_info.movie_id IN (AndyMovies.movie_id)
+           AND (cast_info.role_id = 1 OR cast_info.role_id = 2)")
+andysActors = dbGetQuery(imdb, "SELECT * FROM AndyActs")
+andysActors = dbGetQuery(imdb, "SELECT AndyActs.*, name.name FROM AndyActs, name
+                         WHERE name.id IN (AndyActs.person_id)")
+head(andysActors)
+Andys = unique(andysActors[,8])
+length(Andys)
+nrow(andysActors)#4420 entries (warning: duplicates included)
+#4. Pull all casts for all actors with Andy
+dbGetQuery(imdb, "CREATE TABLE ActorActs AS SELECT cast_info.* FROM cast_info, AndyActs 
+           WHERE cast_info.movie_id IN (AndyActs.movie_id)
+           AND (cast_info.role_id = 1 or cast_info.role_id = 2)")
+actorsActors = dbGetQuery(imdb, "SELECT ActorActs.*, name.name FROM ActorActs, name
+                          WHERE name.id IN (ActorActs.person_id)")
+head(actorsActors)
+Actors = unique(actorsActors[,8])
+length(Actors)
+nrow(actorsActors) #256964 entries (warning: duplicates included)
+
+#14. What are the 10 television series that have the most number of 
+#movie stars appearing in the shows?
+dbGetQuery(imdb, "SELECT * FROM title LIMIT 5")
+dbGetQuery(imdb, "CREATE TABLE mov AS SELECT DISTINCT id FROM title WHERE kind_id = 2")
+dbGetQuery(imdb, "CREATE TABLE moviet AS SELECT cast_info.movie_id, COUNT(person_id) AS num_person
+           FROM cast_info, mov 
+           WHERE (cast_info.role_id = 1 OR cast_info.role_id = 2)
+           AND cast_info.movie_id IN (mov.id)
+           GROUP BY cast_info.movie_id")
+dbGetQuery(imdb, "SELECT * FROM moviet ORDER BY moviet.num_person DESC LIMIT 10")
+dbGetQuery(imdb, "DROP TABLE moviet")
